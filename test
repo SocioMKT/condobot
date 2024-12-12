@@ -1,143 +1,39 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime
-import io
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField, SelectField, TextAreaField
+from wtforms.validators import DataRequired, Email, EqualTo, ValidationError
+from app.models import User
 
-# Initialize session state
-if 'complaints' not in st.session_state:
-    st.session_state.complaints = pd.DataFrame(columns=['ID', 'Type', 'Location', 'Description', 'Reporter', 'Apartment', 'Status', 'Responsible', 'Date'])
+class LoginForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    submit = SubmitField('Sign In')
 
-if 'users' not in st.session_state:
-    st.session_state.users = {
-        'admin': {'password': 'admin123', 'role': 'admin'},
-        'user1': {'password': 'user123', 'role': 'resident'},
-    }
+class RegistrationForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired()])
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    password2 = PasswordField('Repeat Password', validators=[DataRequired(), EqualTo('password')])
+    role = SelectField('Role', choices=[('resident', 'Resident'), ('admin', 'Admin')])
+    apartment = StringField('Apartment Number')
+    submit = SubmitField('Register')
 
-# Authentication
-def authenticate(username, password):
-    if username in st.session_state.users and st.session_state.users[username]['password'] == password:
-        return st.session_state.users[username]['role']
-    return None
+    def validate_username(self, username):
+        user = User.query.filter_by(username=username.data).first()
+        if user is not None:
+            raise ValidationError('Please use a different username.')
 
-# Main app
-def main():
-    st.title("Condominium Complaint Management System")
+    def validate_email(self, email):
+        user = User.query.filter_by(email=email.data).first()
+        if user is not None:
+            raise ValidationError('Please use a different email address.')
 
-    # Login
-    if 'user' not in st.session_state:
-        st.session_state.user = None
+class ComplaintForm(FlaskForm):
+    type = SelectField('Type of Complaint', choices=[('structural', 'Structural'), ('social', 'Social'), ('personal', 'Personal')])
+    location = StringField('Location', validators=[DataRequired()])
+    description = TextAreaField('Description', validators=[DataRequired()])
+    submit = SubmitField('Submit Complaint')
 
-    if st.session_state.user is None:
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            role = authenticate(username, password)
-            if role:
-                st.session_state.user = {'username': username, 'role': role}
-                st.success(f"Logged in as {role}")
-                st.experimental_rerun()
-            else:
-                st.error("Invalid username or password")
-    else:
-        st.write(f"Logged in as: {st.session_state.user['username']} ({st.session_state.user['role']})")
-        if st.button("Logout"):
-            st.session_state.user = None
-            st.experimental_rerun()
-
-        if st.session_state.user['role'] == 'admin':
-            admin_view()
-        else:
-            user_view()
-
-def user_view():
-    st.header("Register a Complaint")
-    
-    complaint_type = st.selectbox("Type of Complaint", ["Structural", "Social", "Personal"])
-    location = st.selectbox("Location", ["Lobby", "Parking", "Pool", "Gym", "Other"])
-    if location == "Other":
-        location = st.text_input("Specify location")
-    description = st.text_area("Description")
-    reporter = st.session_state.user['username']
-    apartment = st.text_input("Apartment Number")
-
-    if st.button("Submit Complaint"):
-        new_complaint = {
-            'ID': len(st.session_state.complaints) + 1,
-            'Type': complaint_type,
-            'Location': location,
-            'Description': description,
-            'Reporter': reporter,
-            'Apartment': apartment,
-            'Status': 'Pending',
-            'Responsible': '',
-            'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        st.session_state.complaints = st.session_state.complaints.append(new_complaint, ignore_index=True)
-        st.success("Complaint registered successfully!")
-
-    st.header("Your Complaints")
-    user_complaints = st.session_state.complaints[st.session_state.complaints['Reporter'] == reporter]
-    st.dataframe(user_complaints)
-
-def admin_view():
-    st.header("Admin Dashboard")
-
-    # Filters
-    st.subheader("Filters")
-    filter_type = st.multiselect("Filter by Type", st.session_state.complaints['Type'].unique())
-    filter_location = st.multiselect("Filter by Location", st.session_state.complaints['Location'].unique())
-    filter_status = st.multiselect("Filter by Status", st.session_state.complaints['Status'].unique())
-    
-    filtered_complaints = st.session_state.complaints
-    if filter_type:
-        filtered_complaints = filtered_complaints[filtered_complaints['Type'].isin(filter_type)]
-    if filter_location:
-        filtered_complaints = filtered_complaints[filtered_complaints['Location'].isin(filter_location)]
-    if filter_status:
-        filtered_complaints = filtered_complaints[filtered_complaints['Status'].isin(filter_status)]
-
-    st.subheader("Complaints")
-    st.dataframe(filtered_complaints)
-
-    # Update complaint status
-    st.subheader("Update Complaint")
-    complaint_id = st.number_input("Complaint ID", min_value=1, max_value=len(st.session_state.complaints), step=1)
-    new_status = st.selectbox("New Status", ["Pending", "In Progress", "Resolved"])
-    responsible = st.text_input("Assign Responsible")
-
-    if st.button("Update Complaint"):
-        st.session_state.complaints.loc[st.session_state.complaints['ID'] == complaint_id, 'Status'] = new_status
-        st.session_state.complaints.loc[st.session_state.complaints['ID'] == complaint_id, 'Responsible'] = responsible
-        st.success(f"Complaint {complaint_id} updated successfully!")
-
-    # Statistics and Graphs
-    st.header("Statistics and Graphs")
-
-    # Complaints by Type
-    fig_type = px.pie(st.session_state.complaints, names='Type', title='Complaints by Type')
-    st.plotly_chart(fig_type)
-
-    # Complaints by Location
-    fig_location = px.bar(st.session_state.complaints['Location'].value_counts().reset_index(), x='index', y='Location', title='Complaints by Location')
-    st.plotly_chart(fig_location)
-
-    # Complaints by Status
-    fig_status = px.pie(st.session_state.complaints, names='Status', title='Complaints by Status')
-    st.plotly_chart(fig_status)
-
-    # Export data
-    st.header("Export Data")
-    if st.button("Export to Excel"):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            st.session_state.complaints.to_excel(writer, sheet_name='Complaints', index=False)
-        st.download_button(
-            label="Download Excel file",
-            data=output.getvalue(),
-            file_name="complaints_export.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-if __name__ == "__main__":
-    main()
+class UpdateComplaintForm(FlaskForm):
+    status = SelectField('Status', choices=[('pending', 'Pending'), ('in_progress', 'In Progress'), ('resolved', 'Resolved')])
+    responsible = StringField('Responsible Person')
+    submit = SubmitField('Update Complaint')
